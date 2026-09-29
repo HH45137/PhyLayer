@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
 #include <cmath>
@@ -335,6 +336,7 @@ bool raycastGround(const vec3& origin, const vec3& dir, vec3& outPos)
     float t = (0.0f - origin.y) / dir.y;
     if (t < 0) return false;
     outPos = origin + dir * t;
+    outPos += glm::vec3(0.0f, 0.05f, 0.0f); // tiny lift so the body does not spawn inside the ground
     return true;
 }
 
@@ -368,7 +370,8 @@ void spawnAtWithOptionalPhysics(const vec3& worldPos)
         {
             Physics::ShapeDesc sd;
             sd.type = Physics::ShapeType::Box;
-            // Adapter must interpret box params (note: no params here; adapter may need further API)
+            // The cube mesh is a unit cube (+/-0.5), so the world half extent is scale * 0.5.
+            sd.halfExtents = e.scale * 0.5f;
             Physics::ShapeHandle sh = physicsWorld->CreateShape(sd);
             physicsWorld->AttachShape(bh, sh);
             e.body = bh;
@@ -378,6 +381,8 @@ void spawnAtWithOptionalPhysics(const vec3& worldPos)
         {
             Physics::ShapeDesc sd;
             sd.type = Physics::ShapeType::Sphere;
+            // The sphere mesh radius is 0.5, so the world radius is scale * 0.5.
+            sd.radius = e.scale.x * 0.5f;
             Physics::ShapeHandle sh = physicsWorld->CreateShape(sd);
             physicsWorld->AttachShape(bh, sh);
             e.body = bh;
@@ -481,17 +486,53 @@ int main()
         // Program will continue in visual-only mode.
     }
 
+    // Static ground collider: without it the spawned dynamic bodies have nothing to
+    // hit and simply fall forever. The visible ground plane sits at y = 0, so the
+    // 1 unit thick slab is centred at y = -0.5.
+    if (physicsWorld)
+    {
+        Physics::BodyDesc gd;
+        gd.isDynamic = false;
+        gd.position = vec3(0.0f, -0.5f, 0.0f);
+
+        Physics::ShapeDesc gsd;
+        gsd.type = Physics::ShapeType::Box;
+        gsd.halfExtents = vec3(50.0f, 0.5f, 50.0f);
+
+        Physics::BodyHandle groundBody = physicsWorld->CreateBody(gd);
+        Physics::ShapeHandle groundShape = physicsWorld->CreateShape(gsd);
+        physicsWorld->AttachShape(groundBody, groundShape);
+    }
+
     vec3 lightPos(5.0f, 8.0f, 5.0f);
     float lastTime = (float)glfwGetTime();
+    float physicsAccumulator = 0.0f;
 
     while (!glfwWindowShouldClose(window))
     {
         float cur = (float)glfwGetTime();
         float dt = cur - lastTime;
         lastTime = cur;
+        if (dt > 0.25f) dt = 0.25f; // clamp after stalls / window drags
 
         processMovement(dt);
-        if (physicsWorld) physicsWorld->Step(dt);
+
+        // Fixed timestep accumulation: Box3D expects a constant step (typically 1/60)
+        // instead of a raw variable frame delta.
+        if (physicsWorld)
+        {
+            const float fixedStep = 1.0f / 60.0f;
+            const int maxStepsPerFrame = 5; // avoid the spiral of death
+            physicsAccumulator += dt;
+            int stepCount = 0;
+            while (physicsAccumulator >= fixedStep && stepCount < maxStepsPerFrame)
+            {
+                physicsWorld->Step(fixedStep);
+                physicsAccumulator -= fixedStep;
+                ++stepCount;
+            }
+            if (physicsAccumulator > fixedStep) physicsAccumulator = 0.0f;
+        }
 
         glViewport(0, 0, SCR_W, SCR_H);
         glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
@@ -519,8 +560,18 @@ int main()
         groundMesh.draw();
 
         // draw entities
-        for (const Entity& e : entities)
+        for (Entity& e : entities)
         {
+            // Sync the render transform from the physics body. Without this the model
+            // matrix would stay frozen at its spawn value and no motion would be visible.
+            if (physicsWorld && e.body.has_value())
+            {
+                Physics::Vec3 p;
+                Physics::Quat q;
+                physicsWorld->GetPosition(*e.body, p, q);
+                e.model = translate(mat4(1.0f), p) * mat4_cast(q) * scale(mat4(1.0f), e.scale);
+            }
+
             glUniformMatrix4fv(locM, 1, GL_FALSE, value_ptr(e.model));
             glUniform3fv(locColor, 1, value_ptr(e.color));
             if (e.type == 0)

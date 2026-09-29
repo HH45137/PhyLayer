@@ -137,11 +137,7 @@ namespace Physics
 
 // ----------------- Box3D adapter implementation (header-only) -----------------
 // This implements a minimal adapter for the Physics::IPhysicsWorld interface
-// using Box3D C API. It is intentionally conservative: supports bodies, box/sphere
-// shapes, trimesh creation (creates a static body to hold the mesh), step,
-// basic velocity/transform APIs, impulse application.
-// Raycast and full contact listener forwarding are marked as simple stubs to
-// be extended as needed.
+// using Box3D C API.
 
 namespace PhysicsBackend
 {
@@ -160,8 +156,16 @@ namespace PhysicsBackend
         Box3DAdapter()
         {
             b3WorldDef def = b3DefaultWorldDef();
-            // defaults ok; user may call SetGravity afterwards
+            // default gravity is typically {0, -10, 0} in Box3D, but set explicitly to be safe
+            def.gravity = b3Vec3{0.0f, -9.81f, 0.0f};
             m_worldId = b3CreateWorld(&def);
+
+            // ensure runtime gravity is set explicitly
+            if (!B3_IS_NULL(m_worldId))
+            {
+                b3World_SetGravity(m_worldId, b3Vec3{0.0f, -9.81f, 0.0f});
+            }
+
             m_nextBodyHandle = 1;
             m_nextShapeHandle = 1;
         }
@@ -195,7 +199,6 @@ namespace PhysicsBackend
         void Step(float dt) override
         {
             if (B3_IS_NULL(m_worldId)) return;
-            // choose 4 substeps (recommended)
             int subSteps = 4;
             b3World_Step(m_worldId, dt, subSteps);
         }
@@ -203,11 +206,9 @@ namespace PhysicsBackend
         BodyHandle CreateBody(const BodyDesc& desc) override
         {
             b3BodyDef def = b3DefaultBodyDef();
-            if (desc.isDynamic) def.type = b3_dynamicBody;
-            else def.type = b3_staticBody;
-            // set position
+            def.type = desc.isDynamic ? b3_dynamicBody : b3_staticBody;
+
             def.position = b3Pos{desc.position.x, desc.position.y, desc.position.z};
-            // rotation: glm::quat is (w,x,y,z)
             def.rotation = b3Quat{{desc.rotation.x, desc.rotation.y, desc.rotation.z}, desc.rotation.w};
 
             def.linearVelocity = b3Vec3{desc.linearVelocity.x, desc.linearVelocity.y, desc.linearVelocity.z};
@@ -282,11 +283,9 @@ namespace PhysicsBackend
 
         ShapeHandle CreateShape(const ShapeDesc& desc) override
         {
-            // We don't create shapes unattached to bodies in Box3D API; so we create a shape record with null ids.
             ShapeHandle h = m_nextShapeHandle++;
             std::lock_guard<std::mutex> lk(m_mutex);
-            // store a placeholder; a real shape is created on AttachShape
-            m_shapes[h] = b3_nullShapeId;
+            m_shapes[h] = b3_nullShapeId; // placeholder
             m_shapeDefs[h] = desc;
             return h;
         }
@@ -300,9 +299,23 @@ namespace PhysicsBackend
             b3BodyId bid = itB->second;
             ShapeDesc sd = itSdef->second;
 
-            b3ShapeId shapeId = {};
+            // Prepare shapeDef and ensure density for dynamic bodies
             b3ShapeDef shapeDef = b3DefaultShapeDef();
-            // default material/density
+
+            // if body is dynamic, ensure shape has non-zero density so mass is computed
+            b3BodyType bt = b3Body_GetType(bid);
+            if (bt == b3_dynamicBody)
+            {
+                shapeDef.density = 1.0f; // give a sensible default density
+                shapeDef.updateBodyMass = true; // ensure body mass is updated
+            }
+            else
+            {
+                shapeDef.density = 0.0f;
+                shapeDef.updateBodyMass = false;
+            }
+
+            b3ShapeId shapeId = {};
             if (sd.type == ShapeType::Sphere)
             {
                 b3Sphere sphere;
@@ -312,19 +325,17 @@ namespace PhysicsBackend
             }
             else if (sd.type == ShapeType::Box)
             {
-                // Box3D uses hulls for box shapes
                 b3BoxHull box = b3MakeBoxHull(sd.halfExtents.x, sd.halfExtents.y, sd.halfExtents.z);
                 shapeId = b3CreateHullShape(bid, &shapeDef, &box.base);
             }
             else
             {
-                // other types not implemented here (capsule/convex). Could be added.
+                // other types not implemented here
             }
 
             if (!B3_IS_NULL(shapeId))
             {
                 m_shapes[s] = shapeId;
-                // Note: b3Create* functions will add the shape to the body and update mass if default def requests.
             }
         }
 
@@ -335,7 +346,6 @@ namespace PhysicsBackend
             if (itShape == m_shapes.end()) return;
             b3ShapeId sid = itShape->second;
             if (B3_IS_NULL(sid)) return;
-            // Destroy shape: pass updateBodyMass=true
             b3DestroyShape(sid, true);
             m_shapes.erase(itShape);
         }
@@ -359,9 +369,7 @@ namespace PhysicsBackend
         ShapeHandle CreateTrimesh(const float* verts, size_t vcount, const int* indices, size_t icount,
                                   bool singlePrecision) override
         {
-            // Build b3MeshDef and call b3CreateMesh, then create a static body and attach the mesh as a mesh shape.
             if (vcount == 0 || icount < 3) return 0;
-            // copy vertices into vector<b3Vec3>
             std::vector<b3Vec3> vbuf;
             vbuf.reserve(vcount);
             for (size_t i = 0; i < vcount; ++i)
@@ -372,7 +380,7 @@ namespace PhysicsBackend
             b3MeshDef def = {};
             def.vertices = vbuf.data();
             def.vertexCount = (int)vcount;
-            def.indices = indices;
+            def.indices = (int*)indices;
             def.triangleCount = (int)(icount / 3);
             def.identifyEdges = true;
             def.useMedianSplit = true;
@@ -382,7 +390,6 @@ namespace PhysicsBackend
             b3MeshData* mesh = b3CreateMesh(&def, nullptr, 0);
             if (mesh == nullptr) return 0;
 
-            // Create a static body to host the mesh
             b3BodyDef bodyDef = b3DefaultBodyDef();
             bodyDef.type = b3_staticBody;
             b3BodyId bodyId = b3CreateBody(m_worldId, &bodyDef);
@@ -404,7 +411,6 @@ namespace PhysicsBackend
 
         bool Raycast(const Vec3& from, const Vec3& to, Contact& outContact) override
         {
-            // Minimal implementation: not implemented here. Could call b3World_CastShape / RayCast helper.
             (void)from;
             (void)to;
             (void)outContact;
@@ -413,30 +419,23 @@ namespace PhysicsBackend
 
         void SetContactListener(IContactListener* listener) override
         {
-            // Hooking Box3D contact events requires implementing and registering callbacks
-            // with the world; that is more involved. We store listener for later extension.
             std::lock_guard<std::mutex> lk(m_mutex);
             m_listener = listener;
         }
 
         void SetGravity(const Vec3& g) override
         {
-            // Box3D doesn't have a simple b3World_SetGravity in the header I used; we can mutate via API if available.
-            // But many users set gravity via world def at creation. If API exists, call it here.
-            // Attempt to call b3World_SetGravity if available (some releases expose it). Fallback: store locally.
-#ifdef B3_HAVE_WORLD_SET_GRAVITY
-            b3World_SetGravity(m_worldId, b3Vec3{g.x, g.y, g.z});
-#else
+            std::lock_guard<std::mutex> lk(m_mutex);
             m_gravity = g;
-            // Note: you may recreate world or set via internal API if accessible.
-            (void)m_gravity;
-#endif
+            if (!B3_IS_NULL(m_worldId))
+            {
+                b3World_SetGravity(m_worldId, b3Vec3{g.x, g.y, g.z});
+            }
         }
 
         void DebugDraw() override
         {
-            // Users can call b3World_Draw with their debug draw adapter.
-            // Not implemented in this minimal wrapper.
+            // not implemented here
         }
 
     private:
