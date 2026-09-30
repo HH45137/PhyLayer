@@ -1,4 +1,7 @@
-﻿#include <glad/glad.h>
+﻿#include <PhyLayer.h>
+#include <ShaderTools.h>
+
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
 #include <glm/glm.hpp>
@@ -16,9 +19,8 @@
 #include <string>
 #include <vector>
 #include <filesystem>
-
-#include <PhyLayer.h>
 #include <fstream>
+
 
 using namespace glm;
 
@@ -26,22 +28,6 @@ using namespace glm;
 
 
 // ---------- utilities (shaders, mesh) ----------
-
-static std::string loadShaderSource(const std::string& name)
-{
-    const std::filesystem::path SHADER_PATH =
-        std::filesystem::current_path().parent_path() / "shader" / name;
-
-    const std::ifstream file(SHADER_PATH, std::ios::binary);
-    if (!file.is_open())
-    {
-        throw std::runtime_error("cannot open shader: " + SHADER_PATH.string());
-    }
-
-    std::ostringstream ss;
-    ss << file.rdbuf();
-    return ss.str();
-}
 
 static void checkShaderCompile(GLuint shader)
 {
@@ -429,8 +415,8 @@ int main()
 
     glEnable(GL_DEPTH_TEST);
 
-    auto vertShaderSource = loadShaderSource("mvp.vert");
-    auto fragShaderSource = loadShaderSource("phong.frag");
+    auto vertShaderSource = ShaderTools::load_shader_source("mvp.vert");
+    auto fragShaderSource = ShaderTools::load_shader_source("phong.frag");
     GLuint program = createShaderProgram(vertShaderSource.c_str(), fragShaderSource.c_str());
 
     cubeMesh = createCubeMesh();

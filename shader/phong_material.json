@@ -1,0 +1,76 @@
+﻿{
+  "name": "simple_phong",
+  "shaders": {
+    "vertex": {
+      "name": "mvp",
+      "variables": {
+        "layouts": {
+          "aPos": {
+            "set": 0,
+            "location": 0,
+            "io_type": "in",
+            "data_type": "vec3"
+          },
+          "aNormal": {
+            "set": 0,
+            "location": 1,
+            "io_type": "in",
+            "data_type": "vec3"
+          }
+        },
+        "uniforms": {
+          "uModel": {
+            "data_type": "mat4"
+          },
+          "uView": {
+            "data_type": "mat4"
+          },
+          "uProj": {
+            "data_type": "mat4"
+          }
+        },
+        "ios": {
+          "vNormal": {
+            "io_type": "out",
+            "data_type": "vec3"
+          },
+          "vWorldPos": {
+            "io_type": "out",
+            "data_type": "vec3"
+          }
+        }
+      }
+    },
+    "fragment": {
+      "name": "phong",
+      "variables": {
+        "layouts": null,
+        "uniforms": {
+          "uColor": {
+            "data_type": "vec3"
+          },
+          "uLightPos": {
+            "data_type": "vec3"
+          },
+          "uViewPos": {
+            "data_type": "vec3"
+          }
+        },
+        "ios": {
+          "vNormal": {
+            "io_type": "in",
+            "data_type": "vec3"
+          },
+          "vWorldPos": {
+            "io_type": "in",
+            "data_type": "vec3"
+          },
+          "FragColor": {
+            "io_type": "out",
+            "data_type": "vec4"
+          }
+        }
+      }
+    }
+  }
+}

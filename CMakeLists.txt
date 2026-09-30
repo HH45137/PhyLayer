@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 
 find_package(glm)
 find_package(glfw3)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 add_subdirectory(deps/box3d)
 
@@ -16,4 +17,4 @@ add_executable(PhyLayer
         deps/glad/glad.c
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE glm::glm glfw box3d::box3d)
+target_link_libraries(${PROJECT_NAME} PRIVATE glm::glm glfw box3d::box3d nlohmann_json::nlohmann_json)
