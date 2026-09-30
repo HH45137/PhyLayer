@@ -15,8 +15,10 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <filesystem>
 
 #include <PhyLayer.h>
+#include <fstream>
 
 using namespace glm;
 
@@ -24,6 +26,23 @@ using namespace glm;
 
 
 // ---------- utilities (shaders, mesh) ----------
+
+static std::string loadShaderSource(const std::string& name)
+{
+    const std::filesystem::path SHADER_PATH =
+        std::filesystem::current_path().parent_path() / "shader" / name;
+
+    const std::ifstream file(SHADER_PATH, std::ios::binary);
+    if (!file.is_open())
+    {
+        throw std::runtime_error("cannot open shader: " + SHADER_PATH.string());
+    }
+
+    std::ostringstream ss;
+    ss << file.rdbuf();
+    return ss.str();
+}
+
 static void checkShaderCompile(GLuint shader)
 {
     GLint ok;
@@ -71,57 +90,6 @@ static GLuint createShaderProgram(const char* vsSrc, const char* fsSrc)
     glDeleteShader(fs);
     return prog;
 }
-
-const char* vertexShaderSrc = R"glsl(
-#version 330 core
-
-layout(location=0) in vec3 aPos;
-layout(location=1) in vec3 aNormal;
-
-uniform mat4 uModel;
-uniform mat4 uView;
-uniform mat4 uProj;
-
-out vec3 vNormal;
-out vec3 vWorldPos;
-
-void main(){
-    vec4 world = uModel * vec4(aPos,1.0);
-    vWorldPos = world.xyz;
-    vNormal = mat3(transpose(inverse(uModel))) * aNormal;
-
-    gl_Position = uProj * uView * world;
-}
-)glsl";
-
-const char* fragmentShaderSrc = R"glsl(
-#version 330 core
-
-in vec3 vNormal;
-in vec3 vWorldPos;
-
-out vec4 FragColor;
-
-uniform vec3 uColor;
-uniform vec3 uLightPos;
-uniform vec3 uViewPos;
-
-void main(){
-    vec3 N = normalize(vNormal);
-    vec3 L = normalize(uLightPos - vWorldPos);
-
-    float diff = max(dot(N,L), 0.0);
-
-    vec3 viewDir = normalize(uViewPos - vWorldPos);
-    vec3 reflectDir = reflect(-L, N);
-    float spec = pow(max(dot(viewDir, reflectDir), 0.0), 16.0);
-
-    vec3 ambient = 0.08 * uColor;
-    vec3 color = ambient + (0.9 * diff + 0.4 * spec) * uColor;
-
-    FragColor = vec4(color, 1.0);
-}
-)glsl";
 
 struct Mesh
 {
@@ -460,7 +428,11 @@ int main()
     }
 
     glEnable(GL_DEPTH_TEST);
-    GLuint program = createShaderProgram(vertexShaderSrc, fragmentShaderSrc);
+
+    auto vertShaderSource = loadShaderSource("mvp.vert");
+    auto fragShaderSource = loadShaderSource("phong.frag");
+    GLuint program = createShaderProgram(vertShaderSource.c_str(), fragShaderSource.c_str());
+
     cubeMesh = createCubeMesh();
     sphereMesh = createUVSphere(36, 18);
 
