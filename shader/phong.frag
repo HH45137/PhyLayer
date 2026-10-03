@@ -19,7 +19,7 @@ void main(){
     vec3 reflectDir = reflect(-L, N);
     float spec = pow(max(dot(viewDir, reflectDir), 0.0), 16.0);
 
-    vec3 ambient = 0.08 * uColor;
+    vec3 ambient = 0.5 * uColor;
     vec3 color = ambient + (0.9 * diff + 0.4 * spec) * uColor;
 
     FragColor = vec4(color, 1.0);
